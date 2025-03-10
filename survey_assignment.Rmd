@@ -1163,7 +1163,7 @@ Respondents who engaged better in the survey were more likely to express support
 
 --> are we doing EDA for country level variables?
 
-### Robustness checks for don't know response to NA variable
+## Robustness checks for don't know response to NA variable
 
 There are 3,280 NA responses to the target variable. To try understand if the missing values are at random, we will test the correlation between NA response and Use the DK for our target variable. 
 
@@ -1184,9 +1184,7 @@ dk_target <- data |>
 table(dk_target$target_NA)
 ```
 
-Confirm DK rates by country:
-
-We see that 
+Confirm DK rates by country. They vary from 1.4% in Belgium to 28.5% in Bulgaria. 
 
 ```{r}
 dk_target |> 
@@ -1203,9 +1201,51 @@ dk_target |>
 
 ```
 
+Treatment of NA variables
+
+If all NA responses to the target are removed, this is how much the "Yes" count increases for each of our countries. We see this is not proportional.  distribution of the variable looks by country. 
+
+Important to consider: The proportion of Yes to No support for document changes will alter when the NA's are removed too. 
+
+```{r}
+
+data |> 
+  group_by(country) |> 
+  summarise(yes_count = sum(trans_docs == "Yes", na.rm=TRUE),
+            num_resp = sum(!is.na(trans_docs)),
+            num_na = sum(is.na(trans_docs)),
+            pct_yes_withna = yes_count / length(country)*100,
+            pct_yes = yes_count/num_resp*100)|> 
+  ggplot(aes(x = reorder(country, -pct_yes))) +
+  geom_col(aes(y = pct_yes), fill = "red") + # First bar (pct_yes)
+  geom_col(aes(y = pct_yes_withna), fill = "yellow", alpha = 0.5) + # Second bar (pct_yes_withna)
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1),
+                     limits = c(0,100)) + 
+  labs(title ="Support for transgender rights to legally change documents, with and without NA's")
+
+data |> 
+  group_by(country) |> 
+  summarise(no_count = sum(trans_docs == "No", na.rm=TRUE),
+            num_resp = sum(!is.na(trans_docs)),
+            num_na = sum(is.na(trans_docs)),
+            pct_no_withna = no_count / length(country)*100,
+            pct_no = no_count/num_resp*100)|> 
+  ggplot(aes(x = reorder(country, pct_no))) +
+  geom_col(aes(y = pct_no), fill = "blue") + # First bar (pct_yes)
+  geom_col(aes(y = pct_no_withna), fill = "green", alpha = 0.5) + # Second bar (pct_yes_withna)
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank()) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1),
+                     limits = c(0,100)) + 
+  labs(title ="NO votes for transgender rights to legally change documents, with and without NA's")
+
+```
+
+
 ### Check correlation with DK of target
 Run model to test what is correlated with DK response, use Chi-Sq for our factor variables
-
 
 ```{r}
 dk_target |> select(where(is.numeric))
@@ -1220,10 +1260,69 @@ dk_target |>
 
 ```
 
-
-
 Model the data for DK response
 First, stepwise to check most important data 
+
+```{r}
+factor_subset <- dk_target %>%
+  dplyr::select(target_NA, where(is.factor)) |> 
+  mutate(target_NA = factor(target_NA))
+
+### Run cramers V for factors
+library(DescTools)
+
+target_var <- "target_NA"
+factor_variables <- names(factor_subset)
+factor_variables <- factor_variables[factor_variables != target_var]
+
+cramers_v_results <- list()
+
+for (variable in factor_variables) {
+    contingency_table <- table(factor_subset[[target_var]], 
+                               factor_subset[[variable]])
+    cramers_v <- CramerV(contingency_table)
+    cramers_v_results[[variable]] <- cramers_v
+}
+
+# Create a Tibble for Results
+tibble(variable = names(cramers_v_results),
+       cramers_v = unlist(cramers_v_results)) |> 
+  arrange(desc(cramers_v))
+
+
+```
+
+This shows all of the factors have quite low association with the NA responses. The highest being internet use. This is a good sign that 
+
+When we look at the 
+```{r}
+numeric_subset <- dk_target %>%
+  dplyr::select(target_NA, where(is.numeric)) 
+
+target_var <- "target_NA"
+numeric_variables <- names(numeric_subset)[names(numeric_subset) != target_var]
+
+cor_results <- list()
+
+for (variable in numeric_variables) {
+    correlation <- cor(numeric_subset$target_NA, 
+                       numeric_subset[[variable]],
+                       use = "pairwise.complete.obs")
+    cor_results[[variable]] <- correlation
+}
+
+# Create a Tibble for Results
+tibble(variable = names(cor_results),
+       cor = unlist(cor_results)) |> 
+  arrange(cor)
+
+```
+
+Again, this is not too much cause for concern. We only have around 10% correlations, positive and negative with the target variable. 
+
+## Testing for relationship 
+Testing if we run a logistic regression to test for important/significant variables. THis may be unnecessary as we have shown above low correlation with NA responses. 
+
 ```{r}
 library(olsrr)
 # library(MASS)
@@ -1258,45 +1357,7 @@ Secondary model with Paradata
 
 ```
 
-Treatment of NA variables
 
-If all NA responses to the target are removed, this is how much the "Yes" count increases for each of our countries. We see this is not proportional.  distribution of the variable looks by country. 
-
-```{r}
-
-data |> 
-  group_by(country) |> 
-  summarise(yes_count = sum(trans_docs == "Yes", na.rm=TRUE),
-            num_resp = sum(!is.na(trans_docs)),
-            num_na = sum(is.na(trans_docs)),
-            pct_yes_withna = yes_count / length(country)*100,
-            pct_yes = yes_count/num_resp*100)|> 
-  ggplot(aes(x = reorder(country, -pct_yes))) +
-  geom_col(aes(y = pct_yes), fill = "red") + # First bar (pct_yes)
-  geom_col(aes(y = pct_yes_withna), fill = "yellow", alpha = 0.5) + # Second bar (pct_yes_withna)
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.title.x = element_blank()) +
-  scale_y_continuous(labels = scales::percent_format(scale = 1),
-                     limits = c(0,100)) + 
-  labs(title ="Support for transgender rights to legally change documents, with and without ")
-
-data |> 
-  group_by(country) |> 
-  summarise(no_count = sum(trans_docs == "No", na.rm=TRUE),
-            num_resp = sum(!is.na(trans_docs)),
-            num_na = sum(is.na(trans_docs)),
-            pct_no_withna = no_count / length(country)*100,
-            pct_no = no_count/num_resp*100)|> 
-  ggplot(aes(x = reorder(country, pct_no))) +
-  geom_col(aes(y = pct_no), fill = "red") + # First bar (pct_yes)
-  geom_col(aes(y = pct_no_withna), fill = "yellow", alpha = 0.5) + # Second bar (pct_yes_withna)
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.title.x = element_blank()) +
-  scale_y_continuous(labels = scales::percent_format(scale = 1),
-                     limits = c(0,100)) + 
-  labs(title ="NO votes for transgender rights to legally change documents, with and without ")
-
-```
 
 
 # Identify key socio-demogrpahic variables
