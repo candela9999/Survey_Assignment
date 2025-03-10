@@ -1184,7 +1184,7 @@ dk_target <- data |>
 table(dk_target$target_NA)
 ```
 
-Confirm DK rates by country. They vary from 1.4% in Belgium to 28.5% in Bulgaria. 
+Confirm DK rates by country. They vary from 1.4% in Belgium to 28.5% in Bulgaria. Overall, the average is 11.95%.
 
 ```{r}
 dk_target |> 
@@ -1285,10 +1285,10 @@ for (variable in factor_variables) {
 }
 
 # Create a Tibble for Results
-tibble(variable = names(cramers_v_results),
+cat_results <- tibble(variable = names(cramers_v_results),
        cramers_v = unlist(cramers_v_results)) |> 
   arrange(desc(cramers_v))
-
+cat_results
 
 ```
 
@@ -1312,44 +1312,103 @@ for (variable in numeric_variables) {
 }
 
 # Create a Tibble for Results
-tibble(variable = names(cor_results),
+cor_results <- tibble(variable = names(cor_results),
        cor = unlist(cor_results)) |> 
   arrange(cor)
+cor_results
 
 ```
 
 Again, this is not too much cause for concern. We only have around 10% correlations, positive and negative with the target variable. 
 
-## Testing for relationship 
-Testing if we run a logistic regression to test for important/significant variables. THis may be unnecessary as we have shown above low correlation with NA responses. 
+#### Modelling relationship with DK
+This may be unnecessary as we have shown above low correlation with NA responses.
+Testing if we run a logistic regression to test for the most important/significant variables.  
+
+Make a subset of data with only our variables above +/- 9.5% correlation and above 10% cramers V.
+
+```{r}
+
+cor_results |> filter(cor > 0.09 | cor < -0.9) |> pull(variable)
+cat_results |> filter(cramers_v >0.1) |> pull(variable)
+
+```
+
+Now model with those vars... This is pretty uninterpretable. Not sure we include it... But did a logisitic model to see if anything was very correlated. 
 
 ```{r}
 library(olsrr)
 # library(MASS)
 # first, run stepwise to determine most important 
+# run base model 
 dk_fit_null <- glm(target_NA ~ 1,
               data = dk_target, 
               family = "binomial")
-dk_fit <- glm(target_NA ~ .,
+# run full fit model of most correlated vars with country (also age^2 for good practice)
+dk_fit <- glm(target_NA ~ lgb_discri + age + I(age*age) + antilgbtq_rights + internet_use + social_class + country_name, 
               data = dk_target, 
               family = "binomial")
-aic_1 <- stepAIC(dk_fit, scope = list(upper = dk_fit, 
+
+# use stepwise to select best mode l
+aic_1 <- MASS::stepAIC(dk_fit, scope = list(upper = dk_fit, 
                              lower = dk_fit_null),
-        direction = "forward", k = 2) # forward based on p-value
+        direction = "both", k = 2) # forward based on p-value
 summary(aic_1)
 
-
-logistic_model <- glm(target_NA ~ country_name, 
+# the best model is the one without age
+na_model <- glm(target_NA ~ lgb_discri + I(age * age) + antilgbtq_rights + internet_use + 
+    social_class + country_name,
                       data = dk_target, 
                       family = "binomial")
-summary(logistic_model)
+summary(na_model)
+broom::tidy(na_model)
 
+exp(coefficients(na_model))
 ```
+
+Some things we can see with the odds ratios (excluding interpretation of countries as that is covered above)... 
+... Can't really interpret (all internet users and non-users were more likely to be NA with the exception of 2-3 times a month use... that's useless info and not logical). 
+For social class, those who did not respond, or were more likely say other social class were more likely to NA respond too. 
+
+Overall, there is generally a low correlation of the NA values with 
+
+### Testing the NA values against paradata
+```{r}
+para <- paradata |> 
+  bind_cols(trans_docs = data$trans_docs) |> 
+  mutate(target_NA = ifelse(is.na(trans_docs), 1, 0)) |> 
+  select(-serialid, -trans_docs)
+
+summary(para$target_NA)
+str(para)
+```
+
+Use Cramers V since we only have factors
 
 ```{r}
+target_var <- "target_NA"
+para_vars <- names(para)[names(para) != target_var]
+
+cramers_v_results <- list()
+
+for (variable in para_vars) {
+    contingency_table <- table(para[[target_var]], 
+                               para[[variable]])
+    contingency_table_no_dk <- contingency_table[, colnames(contingency_table) != "DK"]
+    cramers_v <- CramerV(contingency_table_no_dk) 
+    # include this for no DK as it is all zero which creates errors
+    cramers_v_results[[variable]] <- cramers_v
+}
+
+
+# Create a Tibble for Results
+tibble(variable = names(cramers_v_results),
+       cramers_v = unlist(cramers_v_results)) |> 
+  arrange(desc(cramers_v))
 
 ```
 
+Again, we see low correlation with the paradata and cramers V
 
 Secondary model with Paradata
 
