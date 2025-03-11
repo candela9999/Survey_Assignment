@@ -1245,23 +1245,10 @@ data |>
 
 
 ### Check correlation with DK of target
-Run model to test what is correlated with DK response, use Chi-Sq for our factor variables
 
-```{r}
-dk_target |> select(where(is.numeric))
-class(dk_target$antilgbtq_rights)
-dk_target |> 
-  select(antilgbtq_rights, target_NA) |> 
-  plot_correlation()
+Run model to test what is correlated with DK response, use Cramers V for association between the factor variables and correlation for the numeric variables in the cleaned data. 
 
-dk_target |> 
-  select(target_NA, any_of(where(is.factor(.)))) |> 
-  chisq.test()
-
-```
-
-Model the data for DK response
-First, stepwise to check most important data 
+1/ Model the data for DK responses against the factor variables. 
 
 ```{r}
 factor_subset <- dk_target %>%
@@ -1334,11 +1321,14 @@ cat_results |> filter(cramers_v >0.1) |> pull(variable)
 
 ```
 
-Now model with those vars... This is pretty uninterpretable. Not sure we include it... But did a logisitic model to see if anything was very correlated. 
+Now model with those variables to see if they are significant in explaining the DK values. 
+
+Overall, the logistic model is not very interpretable. We run a stepwise AIC on thesse most correlated variables and then use the best model to test the overall model fit.  
+
+If we want to do this really proper, we should probably oversample the NA share due to class imbalance and model with training and test sets. But I think this regression is fine. 
 
 ```{r}
 library(olsrr)
-# library(MASS)
 # first, run stepwise to determine most important 
 # run base model 
 dk_fit_null <- glm(target_NA ~ 1,
@@ -1354,11 +1344,23 @@ aic_1 <- MASS::stepAIC(dk_fit, scope = list(upper = dk_fit,
                              lower = dk_fit_null),
         direction = "both", k = 2) # forward based on p-value
 summary(aic_1)
+```
 
-# the best model is the one without age
-na_model <- glm(target_NA ~ lgb_discri + I(age * age) + antilgbtq_rights + internet_use + 
-    social_class + country_name,
-                      data = dk_target, 
+The best model is the one without age but includes age^2. So we run the full model to keep the lower level variables included. 
+
+Some things we can see with the odds ratios (excluding interpretation of countries as that is covered above)... 
+... Can't really interpret (all internet users and non-users were more likely to be NA with the exception of 2-3 times a month use... that's useless info and not logical). 
+For social class, those who did not respond, or were more likely say other social class were more likely to NA respond too. 
+
+Overall, there is generally a low correlation of the NA values with 
+
+
+Below is an option using undersampling which is probably more legit too. maybe good to include if we aren't doing in other sections. 
+
+```{r}
+# split to test and training
+na_model <- glm(target_NA ~ .,
+                      data = dk_target2, 
                       family = "binomial")
 summary(na_model)
 broom::tidy(na_model)
@@ -1366,11 +1368,46 @@ broom::tidy(na_model)
 exp(coefficients(na_model))
 ```
 
-Some things we can see with the odds ratios (excluding interpretation of countries as that is covered above)... 
-... Can't really interpret (all internet users and non-users were more likely to be NA with the exception of 2-3 times a month use... that's useless info and not logical). 
-For social class, those who did not respond, or were more likely say other social class were more likely to NA respond too. 
+Approach to test relationship to DK with splitting and undersampling:
 
-Overall, there is generally a low correlation of the NA values with 
+```{r}
+# create new dataset with just vars we want, including age^2
+dk_target2 <- dk_target |> 
+  select(target_NA, lgb_discri, age, antilgbtq_rights, internet_use, social_class, country_name) |> 
+  mutate(age_sq = age*age, .after = age)
+
+# to deal with some class imbalance, undersample from the majority group (NA = 0)
+library(caret)
+set.seed(123)
+# Generate an index
+index <- createDataPartition(dk_target2$target_NA, p = 0.7, list = FALSE, times = 1)
+
+# Subset the dataframe
+train <- dk_target2[index, ]
+test <- dk_target2[-index, ]
+# check splits 
+prop.table(table(train$target_NA))
+prop.table(table(test$target_NA))
+```
+
+Now undersample the majority 
+```{r}
+set.seed(123)
+library(ROSE)
+under <- ovun.sample(target_NA~., 
+                     data=train, 
+                     method = "under", 
+                     N = 4000)$data 
+    # limit the sample to 4000 obs as we have ~2300 for target minority class. 
+
+table(under$target_NA)
+
+#run the rf model 
+#rfunder <- randomForest(target_NA~., data=under)
+#confusionMatrix(predict(rfunder, test), test$target_NA, positive = '1')
+
+```
+
 
 ### Testing the NA values against paradata
 ```{r}
